@@ -1,28 +1,27 @@
-# RunPod Real-ESRGAN Upscaling Worker
+# Real-ESRGAN upscaling worker for RunPod Serverless
 
-GPU-accelerated 4K image upscaling worker for RunPod Serverless.
+<p>
+  <img src="https://img.shields.io/badge/RunPod-serverless-673AB7?style=flat-square" alt="RunPod serverless">
+  <img src="https://img.shields.io/badge/Real--ESRGAN-x4plus-orange?style=flat-square" alt="Real-ESRGAN">
+  <img src="https://img.shields.io/badge/Python-3.10-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT">
+</p>
 
-## Features
+Send an image, get back a ×2 or ×4 upscale (1080p → 4K). A small, readable
+[Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) worker for RunPod Serverless that scales to zero
+when idle, so you only pay for the seconds it runs.
 
-- **Real-ESRGAN x4plus** model for photorealistic upscaling
-- **Real-ESRGAN x4plus Anime** model for anime/illustration upscaling
-- **4x upscaling** from 1080p to 4K in 10-30 seconds
-- **FP16 optimization** for faster GPU processing
-- **Tiled processing** for large images
-- **Automatic model caching** to reduce cold start time
+- **Two models**: `realesrgan-x4plus` for photos, `realesrgan-x4plus-anime` for illustration and anime
+- **FP16 on GPU**, with **tiled** processing (512 px tiles) so large images fit in VRAM
+- Model weights download once per worker and stay cached, and each model is kept loaded after first use
+- JPEG or PNG output; one file (`handler.py`) that's easy to fork
 
-## Performance
-
-- **Processing Time**: 10-30 seconds per 1080p image on RTX 4090
-- **GPU Memory**: ~8GB VRAM for 4K output
-- **Cost**: ~$0.0012 per image ($0.44/hour GPU × 10 sec)
-
-## Input Format
+## Request
 
 ```json
 {
   "input": {
-    "image_base64": "base64_encoded_image_data",
+    "image_base64": "<base64 image>",
     "scale": 4,
     "model": "realesrgan-x4plus",
     "format": "jpg",
@@ -31,106 +30,66 @@ GPU-accelerated 4K image upscaling worker for RunPod Serverless.
 }
 ```
 
-### Parameters
+| Field | Required | Default | Notes |
+|---|---|---|---|
+| `image_base64` | ✅ | | Any format Pillow can read |
+| `scale` | | `4` | Output scale, `2` or `4` |
+| `model` | | `realesrgan-x4plus` | or `realesrgan-x4plus-anime` |
+| `format` | | `jpg` | `jpg` or `png` |
+| `quality` | | `95` | JPEG quality 1–100 |
 
-- `image_base64` (required): Base64-encoded input image
-- `scale` (optional): Upscaling factor, 2 or 4 (default: 4)
-- `model` (optional): `realesrgan-x4plus` or `realesrgan-x4plus-anime` (default: realesrgan-x4plus)
-- `format` (optional): Output format `jpg` or `png` (default: jpg)
-- `quality` (optional): JPEG quality 1-100 (default: 95)
-
-## Output Format
+## Response
 
 ```json
 {
-  "image_base64": "base64_encoded_upscaled_image",
+  "image_base64": "<base64 upscaled image>",
   "original_size": [1920, 1080],
-  "upscaled_size": [3840, 2160],
+  "upscaled_size": [7680, 4320],
   "processing_time": 12.5,
   "model_used": "realesrgan-x4plus",
   "scale_factor": 4
 }
 ```
 
-## Deployment to RunPod
+On failure you get `{"error": "<message>"}`.
 
-### 1. Push to GitHub
+## Call it
 
-```bash
-cd /root/stockmix/runpod-workers/realesrgan-worker
-git init
-git add .
-git commit -m "Initial Real-ESRGAN worker"
-git remote add origin https://github.com/YOUR_USERNAME/runpod-realesrgan-worker.git
-git push -u origin main
+```python
+import base64, requests
+
+ENDPOINT_ID, API_KEY = "your-endpoint-id", "your-runpod-api-key"
+
+with open("photo.jpg", "rb") as f:
+    payload = {"input": {"image_base64": base64.b64encode(f.read()).decode(), "scale": 4}}
+
+r = requests.post(f"https://api.runpod.ai/v2/{ENDPOINT_ID}/runsync",
+                  json=payload, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=300)
+out = r.json()["output"]
+open("photo_4x.jpg", "wb").write(base64.b64decode(out["image_base64"]))
 ```
 
-### 2. Create RunPod Endpoint
+## Deploy
 
-1. Go to [RunPod Console](https://www.runpod.io/console/serverless)
-2. Click **New Endpoint**
-3. Configure:
-   - **Name**: `realesrgan-upscaler`
-   - **Container Source**: GitHub
-   - **GitHub URL**: `https://github.com/YOUR_USERNAME/runpod-realesrgan-worker`
-   - **GPU Type**: RTX 4090 (24GB VRAM recommended)
-   - **Max Workers**: 3
-   - **Idle Timeout**: 5 seconds
-   - **Container Disk**: 20GB
-   - **Spot Instance**: Yes (50-70% cost savings)
+1. Fork this repo.
+2. In the [RunPod console](https://www.runpod.io/console/serverless), go to **New Endpoint → GitHub repo** and pick your fork (it builds from the `Dockerfile`).
+3. Suggested settings: a 24 GB GPU (RTX 4090 / 3090 / A5000), **min workers 0**, idle timeout ~5 s, container disk 20 GB.
+4. Copy the **Endpoint ID**, and create an **API key** under *Settings → API Keys*.
 
-### 3. Get Credentials
+## Test locally
 
-After deployment:
-- Copy **Endpoint ID** from RunPod dashboard
-- Create **API Key** in Settings → API Keys
-
-### 4. Update .env
+Needs a CUDA GPU, or a lot of patience on CPU:
 
 ```bash
-echo "RUNPOD_UPSCALING_ENDPOINT_ID=your_endpoint_id_here" >> /root/stockmix/.env
+pip install -r requirements.txt
+python test_local.py path/to/image.jpg     # writes <name>_4k.jpg next to it
 ```
 
-## Testing Locally (Docker)
+## Performance and cost (rough)
 
-```bash
-# Build image
-docker build -t realesrgan-worker .
-
-# Run locally
-docker run --gpus all -p 8000:8000 realesrgan-worker
-
-# Test with curl
-curl -X POST http://localhost:8000/run \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": {
-      "image_base64": "...",
-      "scale": 4,
-      "model": "realesrgan-x4plus"
-    }
-  }'
-```
-
-## Cost Optimization
-
-- **Use Spot Instances**: 50-70% cheaper than on-demand
-- **Enable Scale-to-Zero**: Only pay when processing
-- **Batch Processing**: Send multiple images concurrently
-- **Model Caching**: Models are cached after first load
-
-## Supported GPUs
-
-- RTX 4090 (recommended) - $0.44/hour
-- RTX 3090 - $0.36/hour
-- A100 40GB - $1.00/hour
-- A100 80GB - $1.40/hour
+Expect seconds to tens of seconds per 1080p image on a 24 GB card, plus a one-off cold start while weights download.
+With scale-to-zero you pay per second of GPU time. Check current RunPod pricing and measure on your own images.
 
 ## License
 
-MIT License - Uses Real-ESRGAN (BSD-3-Clause)
-
-## References
-
-- [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)
-- [RunPod Docs](https://docs.runpod.io/serverless/overview)
+MIT, see [LICENSE](LICENSE). Real-ESRGAN and its weights are BSD-3-Clause, © Xintao Wang et al.

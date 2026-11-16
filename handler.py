@@ -17,8 +17,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global model instance (loaded once on worker startup)
-upsampler = None
+# Loaded models, one per model variant (each loaded once per worker)
+_upsamplers = {}
 
 
 def download_models():
@@ -46,10 +46,9 @@ def download_models():
 
 def initialize_model(model_name='realesrgan-x4plus'):
     """Initialize Real-ESRGAN model on GPU"""
-    global upsampler
-
-    if upsampler is not None:
-        return upsampler
+    key = 'anime' if 'anime' in model_name.lower() else 'x4plus'
+    if key in _upsamplers:
+        return _upsamplers[key]
 
     logger.info(f"Initializing {model_name} model...")
 
@@ -81,6 +80,7 @@ def initialize_model(model_name='realesrgan-x4plus'):
     )
 
     logger.info("Model initialized successfully")
+    _upsamplers[key] = upsampler
     return upsampler
 
 
